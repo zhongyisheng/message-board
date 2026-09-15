@@ -1,0 +1,21 @@
+# 依赖包：体积巨大，而且可以用 npm install 随时还原，不进仓库
+node_modules/
+
+# 数据库文件：里面是运行时产生的数据（留言、用户），属于"数据"不是"代码"
+# 而且它会被程序随时改写，进仓库会产生一堆无意义的改动
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# 密钥与环境配置：绝对不能提交
+.env
+.env.local
+*.key
+*.pem
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

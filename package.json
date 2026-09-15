@@ -1,0 +1,10 @@
+{
+  "name": "message-board",
+  "version": "0.1.0",
+  "private": true,
+  "description": "带登录的留言板：Node.js 后端 + SQLite 数据库 + 原生前端",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
