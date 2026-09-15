@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>留言板 · 第 1 步 · 从云端读数据</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<!--
+  留言板 —— 第 1 步：让网页从云端读数据
+
+  跟前四个项目最大的不同：
+    前面：数据存在你自己浏览器的 localStorage 里，换台电脑打开就没了。
+    这里：数据存在云端的数据库里，谁来打开看到的都是同一份。
+
+  还有一处结构上的变化：这个项目要额外加载两个 js 文件。
+    cloud-config.js  —— 放"公开配置"（应用域名 + 公开标识）
+    一个 CDN 上的 sdk —— 平台提供的工具包，负责替你调云端接口
+  这两个必须先加载完，script.js 才能开始干活。
+-->
+<main class="wrap">
+
+  <header class="head">
+    <h1>留言板</h1>
+    <p class="sub">第 1 步 · 只做一件事：把云端的留言读出来</p>
+  </header>
+
+  <p class="origin" id="origin"></p>
+
+  <section class="panel">
+    <div class="bar">
+      <button id="reload" type="button">重新读一次</button>
+      <span class="status" id="status">准备中…</span>
+    </div>
+
+    <ul class="list" id="list"></ul>
+  </section>
+
+  <footer class="foot">
+    <p>这一版还不会写、不会登录、不会删。那些是后面的步骤。</p>
+  </footer>
+
+</main>
+
+<script src="cloud-config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
