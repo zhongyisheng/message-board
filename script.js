@@ -1,26 +1,281 @@
-/* 留言板 · 第 1 步
+/* 留言板 · 第 2 步
  *
- * 这一版只做一件事：把云端的留言读出来显示。
- * 还不会写、不会登录、不会删 —— 那些是后面的步骤。
+ * 第 1 步做的是"读"：去云端把留言取回来。
+ * 这一版做的是"证明你是谁"：注册 / 登录 / 退出。
  *
- * 整个流程只有三句话，跟前四个项目是同一个套路：
+ * 整个流程还是三句话，跟前四个项目同一个套路：
  *   ① 建客户端（告诉它"我是哪个应用"）
- *   ② 向云端要数据
- *   ③ 把拿到的数据画到页面上
- *
- * 区别在于第 ② 步：以前是从 localStorage 拿（就在你这台电脑里），
- * 现在是从云端拿（要过网络、要过对方的检查）。
+ *   ② 向云端要数据 / 让云端替你办一件事
+ *   ③ 把结果画到页面上
  */
 
 /* ── ① 建客户端 ──────────────────────────────────────────────
-   整个页面只建这一次。以后加的登录、文件上传等功能，全都共用它。
+   整个页面只建这一次。登录、数据库、以后的文件上传，全都共用它。
    两个值都来自 cloud-config.js —— 不要在这里写死任何地址。 */
 const cloud = WorkBuddyCloud.createWorkBuddyCloud({
   endpoint: window.CLOUD_CONFIG.endpoint,
   publishableKey: window.CLOUD_CONFIG.publishableKey
 })
 
-/* ── 页面上的几个零件 ──────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════
+   第 2 步：登录（认证）
+   ══════════════════════════════════════════════════════════════
+
+   先把四个词分清，代码就都看得懂了：
+
+     认证（Authentication）  你向云端证明"你是你"的过程
+     会话（Session）         证明完之后云端发给你的一张通行证
+     登录态                  网页当前知不知道你是谁
+     onAuthStateChange       不是你问它，是它变了主动通知你
+
+   云端可用的登录方式有三种，都必须经过邮箱验证码：
+     邮箱 + 密码 · 邮箱 + 验证码 · 注册（先验证邮箱，再设密码）
+   （匿名登录故意不开放 —— "每行数据都要有主人"是它的底线。）
+   ══════════════════════════════════════════════════════════════ */
+
+const whoEl = document.getElementById('who')
+const openAuthEl = document.getElementById('openAuth')
+const signOutEl = document.getElementById('signOut')
+const authPanel = document.getElementById('authPanel')
+const tabsEl = document.getElementById('tabs')
+const authMsgEl = document.getElementById('authMsg')
+
+function authMsg(text, kind) {
+  authMsgEl.textContent = text
+  authMsgEl.className = 'auth-msg' + (kind ? ' ' + kind : '')
+}
+
+/* ── 标签页切换 ────────────────────────────────────────────── */
+tabsEl.addEventListener('click', function (e) {
+  const btn = e.target.closest('.tab')
+  if (!btn) return
+  showPane(btn.dataset.tab)
+})
+
+function showPane(name) {
+  // 重置密码没有自己的标签按钮（它是从"忘记密码？"进来的），
+  // 所以显示它的时候，让"密码登录"那个标签保持亮着，视觉上不至于"一个都不亮"。
+  const tabName = name === 'reset' ? 'password' : name
+
+  tabsEl.querySelectorAll('.tab').forEach(function (b) {
+    b.classList.toggle('is-on', b.dataset.tab === tabName)
+  })
+  // 面板一次只显示一个（重置密码是独立一屏，不跟"密码登录"同时出现）
+  document.querySelectorAll('.pane').forEach(function (p) {
+    p.hidden = p.dataset.pane !== name
+  })
+  authMsg('')
+}
+
+/* ── 登录态怎么显示 ──────────────────────────────────────────
+   一个函数同时管三样：显示谁、两个按钮谁出现、面板收起。 */
+function renderAccount(session) {
+  if (session && session.user) {
+    whoEl.textContent = session.user.email || '已登录'
+    openAuthEl.hidden = true
+    signOutEl.hidden = false
+    authPanel.hidden = true
+  } else {
+    whoEl.textContent = '未登录'
+    openAuthEl.hidden = false
+    signOutEl.hidden = true
+  }
+}
+
+openAuthEl.addEventListener('click', function () {
+  authPanel.hidden = !authPanel.hidden
+  if (!authPanel.hidden) showPane('password')
+})
+
+/* ── 退出 ──────────────────────────────────────────────────── */
+signOutEl.addEventListener('click', async function () {
+  const { error } = await cloud.auth.signOut()
+  if (error) return authMsg('退出失败：' + (error.message || error), 'err')
+  authMsg('')
+})
+
+/* ──────────────────────────────────────────────────────────────
+   ① 邮箱 + 密码登录
+   ────────────────────────────────────────────────────────────── */
+const pwEmail = document.getElementById('pw-email')
+const pwPassword = document.getElementById('pw-password')
+
+document.getElementById('pw-submit').addEventListener('click', async function () {
+  const email = pwEmail.value.trim()
+  const password = pwPassword.value
+  if (!email || !password) return authMsg('邮箱和密码都要填。', 'err')
+
+  authMsg('正在登录…', 'busy')
+  const { error } = await cloud.auth.signInWithPassword({ email, password })
+  if (error) {
+    // 故意不写"这个邮箱没注册过" —— 那等于告诉别人哪些邮箱是这里的用户
+    return authMsg('邮箱或密码不对。', 'err')
+  }
+  authMsg('')
+})
+
+document.getElementById('pw-forgot').addEventListener('click', function () {
+  showPane('reset')
+})
+
+/* ──────────────────────────────────────────────────────────────
+   ② 邮箱 + 验证码登录（不用记密码）
+
+   这是一个两步流程，所以需要把第一步的结果暂存下来：
+     started = 发送验证码 → 拿到一个"这次验证"的凭据
+     started.data.verify({ token })  → 拿验证码把它兑现成登录态
+   ────────────────────────────────────────────────────────────── */
+let otpStarted = null
+const otpStep2 = document.getElementById('otp-step2')
+
+document.getElementById('otp-send').addEventListener('click', async function () {
+  const email = document.getElementById('otp-email').value.trim()
+  if (!email) return authMsg('先填邮箱。', 'err')
+
+  authMsg('正在发送验证码…', 'busy')
+  const started = await cloud.auth.signInWithOtp({ email })
+  if (started.error) return authMsg('发送失败：' + (started.error.message || started.error), 'err')
+
+  otpStarted = started
+  otpStep2.hidden = false
+  authMsg('验证码已发出，去邮箱收（找不到就看垃圾邮件）。', 'ok')
+})
+
+document.getElementById('otp-submit').addEventListener('click', async function () {
+  if (!otpStarted) return authMsg('请先点「发送验证码」。', 'err')
+  const token = document.getElementById('otp-token').value.trim()
+  if (!token) return authMsg('填一下收到的验证码。', 'err')
+
+  authMsg('正在校验…', 'busy')
+  const completed = await otpStarted.data.verify({ token })
+  if (completed.error) return authMsg('验证码不对或已经过期了，重新发一次。', 'err')
+  authMsg('')
+})
+
+/* ──────────────────────────────────────────────────────────────
+   ③ 注册（先验证邮箱，再设密码）
+
+   分两步，也不能合并成一步 —— 云端不允许"没验证邮箱就建账号"。
+     sendOtp({ email })        → 发码，同时告诉你这个邮箱是不是已经注册过
+     verifyOtp({ ..., password }) → 兑现，顺便把密码带上；注册成功即登录
+   ────────────────────────────────────────────────────────────── */
+let signupSent = null
+const suStep2 = document.getElementById('su-step2')
+const suEmail = document.getElementById('su-email')
+
+document.getElementById('su-send').addEventListener('click', async function () {
+  const email = suEmail.value.trim()
+  if (!email) return authMsg('先填邮箱。', 'err')
+
+  authMsg('正在发送验证码…', 'busy')
+  const sent = await cloud.auth.sendOtp({ email })
+  if (sent.error) return authMsg('发送失败：' + (sent.error.message || sent.error), 'err')
+
+  signupSent = sent
+  suStep2.hidden = false
+  authMsg('验证码已发出，去邮箱收（找不到就看垃圾邮件）。', 'ok')
+})
+
+document.getElementById('su-submit').addEventListener('click', async function () {
+  if (!signupSent) return authMsg('请先点「发送验证码」。', 'err')
+  const token = document.getElementById('su-token').value.trim()
+  const password = document.getElementById('su-password').value
+  if (!token || !password) return authMsg('验证码和密码都要填。', 'err')
+
+  authMsg('正在创建账号…', 'busy')
+  const completed = await cloud.auth.verifyOtp({
+    verificationId: signupSent.data.verificationId,
+    token: token,
+    email: suEmail.value.trim(),
+    isExistingUser: signupSent.data.isExistingUser,
+    // 已经注册过的邮箱不该再走"建账号"，也就不该覆盖人家的旧密码
+    password: signupSent.data.isExistingUser ? undefined : password
+  })
+
+  if (completed.error) return authMsg('注册失败：' + (completed.error.message || completed.error), 'err')
+  if (completed.data && completed.data.isExistingUser) {
+    return authMsg('这个邮箱已经注册过了，请用「密码登录」或「验证码登录」。', 'err')
+  }
+  authMsg('')
+})
+
+/* ──────────────────────────────────────────────────────────────
+   ④ 重置密码（忘记密码）
+
+   同样是两步。最后一步不是"改密码"，而是 updateUser({ nonce, password }) ——
+   成功之后云端会直接把你登进去，所以不用再手动登录一次。
+   ────────────────────────────────────────────────────────────── */
+let resetStarted = null
+const rsStep2 = document.getElementById('rs-step2')
+const rsEmail = document.getElementById('rs-email')
+
+document.getElementById('rs-send').addEventListener('click', async function () {
+  const email = rsEmail.value.trim()
+  if (!email) return authMsg('先填邮箱。', 'err')
+
+  authMsg('正在发送验证码…', 'busy')
+  const started = await cloud.auth.resetPasswordForEmail(email)
+  if (started.error) return authMsg('发送失败：' + (started.error.message || started.error), 'err')
+
+  resetStarted = started
+  rsStep2.hidden = false
+  authMsg('验证码已发出，去邮箱收（找不到就看垃圾邮件）。', 'ok')
+})
+
+document.getElementById('rs-submit').addEventListener('click', async function () {
+  if (!resetStarted) return authMsg('请先点「发送验证码」。', 'err')
+  const nonce = document.getElementById('rs-token').value.trim()
+  const password = document.getElementById('rs-password').value
+  if (!nonce || !password) return authMsg('验证码和新密码都要填。', 'err')
+
+  authMsg('正在重设密码…', 'busy')
+  const completed = await resetStarted.data.updateUser({ nonce, password })
+  if (completed.error) return authMsg('重设失败：' + (completed.error.message || completed.error), 'err')
+  authMsg('')
+})
+
+document.getElementById('rs-back').addEventListener('click', function () {
+  showPane('password')
+})
+
+/* ──────────────────────────────────────────────────────────────
+   开门检查：干"和身份有关的事"之前，先问一句"现在登录了吗"
+
+   第 3 步发留言时会用到它。所有涉及"我的数据"的操作都要先过这一关 ——
+   不能靠页面上的按钮藏没藏来做安全判断，那层判断改一行代码就绕过去了。
+   ────────────────────────────────────────────────────────────── */
+async function requireLogin() {
+  const { data: session, error } = await cloud.auth.getSession()
+  if (error || !session) {
+    authPanel.hidden = false
+    showPane('password')
+    authMsg('这一步需要先登录。', 'err')
+    return null
+  }
+  return session
+}
+
+/* ── 启动：先问云端"我现在登录着吗" ──────────────────────────
+   刷新页面后还是登录状态，就是因为云端那张通行证存在浏览器里，
+   页面一打开 SDK 会自动拿它去核对。 */
+async function initAuth() {
+  const { data: session, error } = await cloud.auth.getSession()
+  if (error) authMsg('读取登录状态失败：' + (error.message || error), 'err')
+  renderAccount(session)
+}
+
+/* 订阅登录状态的变化。
+   和"提问—回答"（getSession）相反，这是"它变了就通知我"。
+   登录、退出、通行证过期，都会走到这里。 */
+cloud.auth.onAuthStateChange(function (event, session) {
+  renderAccount(session)
+  console.log('[登录状态变化]', event)
+})
+
+/* ══════════════════════════════════════════════════════════════
+   第 1 步的部分：从云端读留言
+   ══════════════════════════════════════════════════════════════ */
+
 const listEl = document.getElementById('list')
 const statusEl = document.getElementById('status')
 const reloadEl = document.getElementById('reload')
@@ -47,7 +302,7 @@ function showOrigin() {
   }
 }
 
-/* ── ② 向云端要数据 ──────────────────────────────────────────
+/* ── 向云端要数据 ────────────────────────────────────────────
    from('messages')   —— 要哪张表
    .select(...)       —— 要哪几列
    .order(...)        —— 按时间倒序，新的在最前
@@ -81,7 +336,7 @@ async function loadMessages() {
   reloadEl.disabled = false
 }
 
-/* ── ③ 画到页面上 ────────────────────────────────────────────
+/* ── 画到页面上 ──────────────────────────────────────────────
    注意这里全程用 textContent 而不是 innerHTML。
    因为留言是"别人写的内容"，用 innerHTML 会把别人写的标签当代码执行 ——
    这是最常见的网页漏洞之一（XSS）。textContent 只当纯文本，安全。 */
@@ -139,7 +394,9 @@ function setStatus(text, kind) {
 }
 
 /* ── 启动 ────────────────────────────────────────────────────
-   页面一打开就先读一次。点按钮可以再读一次 —— 用来验证"每次都是真的去云端"。 */
+   页面一打开先查登录状态，再读一次留言。
+   点按钮可以再读一次 —— 用来验证"每次都是真的去云端"。 */
 reloadEl.addEventListener('click', loadMessages)
 showOrigin()
+initAuth()
 loadMessages()

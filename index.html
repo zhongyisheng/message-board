@@ -3,30 +3,114 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>留言板 · 第 1 步 · 从云端读数据</title>
+  <title>留言板 · 第 2 步 · 加上登录</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <!--
-  留言板 —— 第 1 步：让网页从云端读数据
+  留言板 —— 第 2 步：加上登录
 
-  跟前四个项目最大的不同：
-    前面：数据存在你自己浏览器的 localStorage 里，换台电脑打开就没了。
-    这里：数据存在云端的数据库里，谁来打开看到的都是同一份。
+  第 1 步做的是"读"：网页去云端把留言取回来。
+  这一版做的是"证明你是谁"：注册 / 登录 / 退出。
 
-  还有一处结构上的变化：这个项目要额外加载两个 js 文件。
-    cloud-config.js  —— 放"公开配置"（应用域名 + 公开标识）
-    一个 CDN 上的 sdk —— 平台提供的工具包，负责替你调云端接口
-  这两个必须先加载完，script.js 才能开始干活。
+  为什么登录必须排在发留言之前？
+    云端的规矩是"每一行数据都必须有主人"（owner_id NOT NULL）。
+    没有身份 → 服务器不知道这条留言该算谁的 → 写入直接被拒。
+    所以「你是谁」在这个项目里是必需品，不是可选项。
+
+  这一版只做登录本身，还不发留言（那是第 3 步）。
 -->
 <main class="wrap">
 
   <header class="head">
-    <h1>留言板</h1>
-    <p class="sub">第 1 步 · 只做一件事：把云端的留言读出来</p>
+    <div class="head-row">
+      <h1>留言板</h1>
+      <div class="account">
+        <span class="who" id="who">检查登录状态…</span>
+        <button id="openAuth" type="button">登录 / 注册</button>
+        <button id="signOut" type="button" class="ghost" hidden>退出</button>
+      </div>
+    </div>
+    <p class="sub">第 2 步 · 加上登录（注册 / 登录 / 退出）</p>
   </header>
 
   <p class="origin" id="origin"></p>
+
+  <!-- ───────────── 登录面板 ─────────────
+       平时收起来，点右上角「登录 / 注册」才展开。
+       三种登录方式各占一个标签页，外加一个「重置密码」。
+       注意：这三种方式都必须先有邮箱验证码 —— 这是云端定的规矩。 -->
+  <section class="auth" id="authPanel" hidden>
+
+    <div class="tabs" id="tabs">
+      <button class="tab is-on" type="button" data-tab="password">密码登录</button>
+      <button class="tab" type="button" data-tab="otp">验证码登录</button>
+      <button class="tab" type="button" data-tab="signup">注册</button>
+    </div>
+
+    <!-- ① 邮箱 + 密码 -->
+    <div class="pane" data-pane="password">
+      <label class="field"><span>邮箱</span>
+        <input id="pw-email" type="email" autocomplete="username" placeholder="you@example.com" /></label>
+      <label class="field"><span>密码</span>
+        <input id="pw-password" type="password" autocomplete="current-password" /></label>
+      <div class="row">
+        <button id="pw-submit" type="button">登录</button>
+        <button class="link" id="pw-forgot" type="button">忘记密码？</button>
+      </div>
+    </div>
+
+    <!-- ② 邮箱 + 验证码（不用记密码） -->
+    <div class="pane" data-pane="otp" hidden>
+      <label class="field"><span>邮箱</span>
+        <input id="otp-email" type="email" autocomplete="username" placeholder="you@example.com" /></label>
+      <div class="row">
+        <button id="otp-send" type="button">发送验证码</button>
+      </div>
+      <div id="otp-step2" hidden>
+        <label class="field"><span>邮箱里收到的验证码</span>
+          <input id="otp-token" inputmode="numeric" autocomplete="one-time-code" /></label>
+        <div class="row"><button id="otp-submit" type="button">登录</button></div>
+      </div>
+    </div>
+
+    <!-- ③ 注册：先验证邮箱，再设密码 -->
+    <div class="pane" data-pane="signup" hidden>
+      <p class="note">注册要先证明这个邮箱是你的：点「发送验证码」，去邮箱把码填回来，再设一个密码。</p>
+      <label class="field"><span>邮箱</span>
+        <input id="su-email" type="email" autocomplete="username" placeholder="you@example.com" /></label>
+      <div class="row">
+        <button id="su-send" type="button">发送验证码</button>
+      </div>
+      <div id="su-step2" hidden>
+        <label class="field"><span>邮箱里收到的验证码</span>
+          <input id="su-token" inputmode="numeric" autocomplete="one-time-code" /></label>
+        <label class="field"><span>设置一个密码</span>
+          <input id="su-password" type="password" autocomplete="new-password" /></label>
+        <div class="row"><button id="su-submit" type="button">创建账号</button></div>
+      </div>
+    </div>
+
+    <!-- ④ 重置密码（从密码登录页的「忘记密码？」进来） -->
+    <div class="pane" data-pane="reset" hidden>
+      <p class="note">忘记密码：先证明邮箱是你的，再设一个新密码。</p>
+      <label class="field"><span>邮箱</span>
+        <input id="rs-email" type="email" autocomplete="username" placeholder="you@example.com" /></label>
+      <div class="row">
+        <button id="rs-send" type="button">发送验证码</button>
+        <button class="link" id="rs-back" type="button">返回登录</button>
+      </div>
+      <div id="rs-step2" hidden>
+        <label class="field"><span>邮箱里收到的验证码</span>
+          <input id="rs-token" inputmode="numeric" autocomplete="one-time-code" /></label>
+        <label class="field"><span>新密码</span>
+          <input id="rs-password" type="password" autocomplete="new-password" /></label>
+        <div class="row"><button id="rs-submit" type="button">重设密码并登录</button></div>
+      </div>
+    </div>
+
+    <p class="auth-msg" id="authMsg"></p>
+  </section>
 
   <section class="panel">
     <div class="bar">
@@ -38,7 +122,7 @@
   </section>
 
   <footer class="foot">
-    <p>这一版还不会写、不会登录、不会删。那些是后面的步骤。</p>
+    <p>这一版只加了登录，还不会发留言、不会删（那是第 3 步）。</p>
   </footer>
 
 </main>

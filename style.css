@@ -1,6 +1,6 @@
 /* 留言板 · 皮肤
    颜色集中放在 :root 里，想换主题改这一处就够。
-   这是第 1 步，样式够用就行，美化留到最后一步。 */
+   这是第 2 步，样式够用就行，美化留到最后一步。 */
 
 :root {
   --bg: #12141a;
@@ -29,11 +29,29 @@ body {
 .wrap { max-width: 720px; margin: 0 auto; }
 
 .head h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 26px;
   letter-spacing: 1px;
 }
-.head .sub { margin: 0 0 20px; color: var(--text-dim); font-size: 14px; }
+.head .sub { margin: 4px 0 20px; color: var(--text-dim); font-size: 14px; }
+
+/* 标题和账号栏排在一行：左边标题，右边"你是谁 + 登录/退出" */
+.head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.account { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.who {
+  color: var(--text-dim);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 页面地址提示条：正常是灰底，地址不对时变黄 */
 .origin {
@@ -51,6 +69,51 @@ body {
   color: var(--warn);
   background: rgba(255, 196, 77, 0.08);
 }
+
+/* ── 登录面板 ── */
+.auth {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tab {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-color: transparent;
+  color: var(--text-dim);
+}
+.tab.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.field { display: block; margin-bottom: 12px; }
+.field span { display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-dim); }
+.field input {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.field input:focus { outline: none; border-color: var(--accent); }
+
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+
+.note { margin: 0 0 12px; font-size: 12px; color: var(--text-dim); }
+
+.auth-msg { margin: 12px 0 0; min-height: 20px; font-size: 13px; color: var(--text-dim); }
+.auth-msg.ok { color: var(--ok); }
+.auth-msg.err { color: var(--err); }
+.auth-msg.busy { color: var(--accent); }
 
 .panel {
   background: var(--panel);
@@ -82,6 +145,19 @@ button:hover:not(:disabled) { background: rgba(77, 163, 255, 0.12); }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: 0.45; cursor: default; }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+button.ghost { border-color: var(--line); color: var(--text-dim); }
+button.ghost:hover:not(:disabled) { background: var(--panel-2); }
+
+button.link {
+  padding: 8px 4px;
+  border-color: transparent;
+  background: none;
+  color: var(--text-dim);
+  text-decoration: underline;
+  font-size: 13px;
+}
+button.link:hover:not(:disabled) { color: var(--accent); background: none; }
 
 .status { font-size: 13px; color: var(--text-dim); }
 .status.ok { color: var(--ok); }
