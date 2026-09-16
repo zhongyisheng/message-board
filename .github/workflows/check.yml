@@ -1,0 +1,45 @@
+# 自动检查 —— 项目 5 · 自动化（第 1 版：先跑通链路）
+#
+# 这个文件放在仓库里，GitHub 就会在"有人往 main 推代码"时，
+# 自己开一台机器、把代码取下来、按下面写的步骤跑一遍。
+#
+# 你不用在自己电脑上做任何事，也不用开着电脑 —— 它跑在 GitHub 那边。
+#
+# 想改它？改完 commit + push 就会生效。它就是仓库的一部分。
+
+name: 自动检查
+
+# ── 什么时候跑 ─────────────────────────────────────────────
+on:
+  push:
+    branches: [main]      # 每次往 main 推代码就跑
+  workflow_dispatch:      # 也允许你手动点一下就跑（学习时很有用）
+
+# ── 跑什么 ────────────────────────────────────────────────
+jobs:
+  check:
+    # 借一台 GitHub 的机器（每次都是全新的、用完整台扔掉）
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ① 把代码取下来
+        uses: actions/checkout@v4
+
+      - name: ② 装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ③ 报一下家底（跑在哪、什么版本）
+        run: |
+          echo "跑在哪台机器上：$RUNNER_OS"
+          echo "仓库：$GITHUB_REPOSITORY"
+          echo "是谁推的：$GITHUB_ACTOR"
+          echo "哪次提交：$GITHUB_SHA"
+          node --version
+
+      - name: ④ 语法检查（JS 写得对不对）
+        run: node --check script.js
+
+      - name: ⑤ 收工
+        run: echo "✅ 检查全部通过"
