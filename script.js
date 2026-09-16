@@ -1,8 +1,9 @@
-/* 留言板 · 第 3 步
+/* 留言板 · 第 4 步
  *
  * 第 1 步做的是"读"：去云端把留言取回来。
  * 第 2 步做的是"证明你是谁"：注册 / 登录 / 退出。
- * 这一版做的是"写"：把留言送进云端。
+ * 第 3 步做的是"写"：把留言送进云端。
+ * 这一版做的是"删"—— 而重点不在删，在"权限"。
  *
  * 整个流程还是三句话，跟前四个项目同一个套路：
  *   ① 建客户端（告诉它"我是哪个应用"）
@@ -373,7 +374,13 @@ async function loadMessages() {
 /* ── 画到页面上 ──────────────────────────────────────────────
    注意这里全程用 textContent 而不是 innerHTML。
    因为留言是"别人写的内容"，用 innerHTML 会把别人写的标签当代码执行 ——
-   这是最常见的网页漏洞之一（XSS）。textContent 只当纯文本，安全。 */
+   这是最常见的网页漏洞之一（XSS）。textContent 只当纯文本，安全。
+
+   第 4 步新增：每条留言下面加一个「删除」按钮。
+   ⚠️ 故意**不做**"这条是不是我的"这种前端判断 —— 两个原因：
+     ① 前端判断是假的：改一行代码就绕过去，它拦不住任何人；
+     ② 数据库那道门（RLS）才是真的：不归你的行，它一行都不动。
+   所以按钮谁都能点，能不能删掉由云端说了算。这一版就是让你亲眼看见这件事。 */
 function render(rows) {
   listEl.innerHTML = ''
 
@@ -388,6 +395,7 @@ function render(rows) {
   rows.forEach(function (row) {
     const li = document.createElement('li')
     li.className = 'msg'
+    li.dataset.id = row.id
 
     const head = document.createElement('div')
     head.className = 'msg-head'
@@ -407,8 +415,41 @@ function render(rows) {
     body.className = 'msg-body'
     body.textContent = row.content
 
+    // 删除按钮 + 它自己的"上膛"状态（先点一次变「真的删？」，再点才真的删）
+    const actions = document.createElement('div')
+    actions.className = 'msg-actions'
+
+    const del = document.createElement('button')
+    del.type = 'button'
+    del.className = 'danger'
+    del.textContent = '删除'
+    del.addEventListener('click', function () {
+      if (del.dataset.armed !== '1') {
+        del.dataset.armed = '1'
+        del.textContent = '真的删？'
+        del.classList.add('is-armed')
+        // 4 秒不动手就自动收回去，免得你以为它还是个普通按钮
+        clearTimeout(del._disarm)
+        del._disarm = setTimeout(disarm, 4000)
+        setStatus('再点一次「真的删？」就把编号 ' + row.id + ' 这条删掉（4 秒后自动取消）。', 'busy')
+        return
+      }
+      disarm()
+      deleteMessage(row.id, del)
+    })
+    function disarm() {
+      clearTimeout(del._disarm)
+      delete del.dataset.armed
+      del.textContent = '删除'
+      del.classList.remove('is-armed')
+      del.disabled = false
+    }
+
+    actions.appendChild(del)
+
     li.appendChild(head)
     li.appendChild(body)
+    li.appendChild(actions)
     listEl.appendChild(li)
   })
 }
@@ -562,6 +603,85 @@ cpSubmit.addEventListener('click', async function () {
     cpSubmit.disabled = false
   }
 })
+
+/* ══════════════════════════════════════════════════════════════
+   第 4 步：删留言 —— 重点是"权限"，不是"删除"
+   ══════════════════════════════════════════════════════════════
+
+   写法上只多了一个链：
+     读 → .select()
+     写 → .insert({...}).select()
+     删 → .delete().eq('id', 编号).select()
+
+   ⭐ 这一版最值钱的一句话：
+      **空数组 = 被拦住了，不是成功了。**
+
+      删别人的留言时，云端不会报错，也不会提示"你没权限"，
+      它就返回一个空数组 —— 因为 RLS 会把"你不该碰的行"直接过滤掉。
+      你要是只检查"有没有 error"，就会以为删成功了。
+      所以判据必须是：**看删掉了几条**。
+
+   ⚠️ 还有必须遵守的一条：永远不要写"没有 .eq() 的删除"。
+      那等于"把这张表清空"。这不是比喻，是真的一条 SQL 就把所有人的留言删光。
+   ══════════════════════════════════════════════════════════════ */
+
+async function deleteMessage(id, btn) {
+  if (btn) btn.disabled = true
+
+  try {
+    // ① 开门检查：删是"以你的身份"动数据，先确认登录。
+    //    注意这跟"按钮有没有藏起来"是两回事 —— 藏按钮只是好看。
+    setStatus('① 正在确认登录状态…', 'busy')
+    const session = await withTimeout(requireLogin(), 15000)
+    if (!session) return setStatus('这一步需要先登录，上面已经帮你把登录框打开了。', 'err')
+    console.log('[第4步-①] 已登录：', session.user && session.user.email)
+
+    // ② 删。一定带 .eq('id', …) —— 只删这一条，不准写"没有条件"的删除。
+    setStatus('② 正在让云端删掉（编号 ' + id + '）…（最多等 15 秒）', 'busy')
+    console.log('[第4步-②] 发出删除请求：{ id: ' + id + ' }')
+
+    const res = await withTimeout(
+      cloud.database.from('messages').delete().eq('id', id).select(),
+      15000
+    )
+    console.log('[第4步-②] 云端回应：', res)
+
+    const error = res && res.error
+    const removed = res && res.data
+
+    if (error) {
+      // 42501 = 权限被拒
+      if (error.code === '42501') {
+        return setStatus('云端拒绝了这次删除：未登录，或者这条数据不归你。', 'err')
+      }
+      return setStatus('删除失败：' + (error.message || error), 'err')
+    }
+
+    // ⭐ 关键判据：不报错 ≠ 删掉了。要看真的删掉了几条。
+    const n = Array.isArray(removed) ? removed.length : (removed ? 1 : 0)
+
+    if (n === 0) {
+      return setStatus(
+        '⚠️ 一行都没删掉 —— 这条留言不归你（云端把它过滤掉了，而且不报错），' +
+        '或者它已经不在了。这就是「沉默的失败」：没有报错，但什么也没发生。',
+        'err'
+      )
+    }
+
+    // ③ 删完再读一遍。删掉了也要读回来才算数。
+    setStatus('③ 云端删掉了 ' + n + ' 条，正在重新读一遍列表…', 'ok')
+    await loadMessages()
+    setStatus('③ 已删掉（编号 ' + id + '）。列表就是刚从云端读回来的结果 —— 删掉了也要读回来才算数。', 'ok')
+  } catch (e) {
+    // 走到这里 = 代码自己出错了（不是服务器返回的错误）。一定要让它可见。
+    console.error('[第4步] 出错了：', e)
+    setStatus('删除出错：' + ((e && (e.message || e)) || '未知错误') + '（细节已打到 Console）', 'err')
+  } finally {
+    // 无论成功、失败还是抛错，按钮最后一定要恢复 ——
+    // 否则你会遇到"点一次之后再点就没反应"（按钮一直是灰的）。
+    if (btn) btn.disabled = false
+  }
+}
 
 /* ── 兜底：任何"没被接住的错误"都要留痕 ──────────────────────
    浏览器默认会把这类错误悄悄吃掉：页面看着没事，其实某一步已经断了 ——
