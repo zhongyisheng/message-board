@@ -260,8 +260,27 @@ document.getElementById('rs-back').addEventListener('click', function () {
    不能靠页面上的按钮藏没藏来做安全判断，那层判断改一行代码就绕过去了。
    ────────────────────────────────────────────────────────────── */
 async function requireLogin() {
-  const { data: session, error } = await cloud.auth.getSession()
-  if (error || !session) {
+  // 这一步也要兜住错误：万一"查登录状态"本身失败（比如凭据过期、网络不通），
+  // 它会抛错。抛出去没人接，页面就什么都不显示 —— 那是查不出来的 bug。
+  let session = null
+  try {
+    const res = await cloud.auth.getSession()
+    if (res && res.error) {
+      authPanel.hidden = false
+      showPane('password')
+      authMsg('读取登录状态失败：' + (res.error.message || res.error) + '，请重新登录一次。', 'err')
+      return null
+    }
+    session = res && res.data
+  } catch (e) {
+    console.error('[开门检查] 查登录状态时抛错：', e)
+    authPanel.hidden = false
+    showPane('password')
+    authMsg('读取登录状态失败（' + ((e && e.message) || e) + '），请重新登录一次。', 'err')
+    return null
+  }
+
+  if (!session) {
     authPanel.hidden = false
     showPane('password')
     authMsg('这一步需要先登录。', 'err')
@@ -448,55 +467,116 @@ function updateCount() {
 }
 cpText.addEventListener('input', updateCount)
 
+/* ── 等一个"最多等多久"的壳子 ────────────────────────────────
+   请求发出去之后如果一直没人回，页面就会永远停在"正在写入…"，
+   既不算成功也不算失败 —— 这是最难查的一种状态（静默卡死）。
+   所以给每个请求配一个闹钟：超过 15 秒还没回，就当作失败报出来。 */
+function withTimeout(promiseLike, ms) {
+  return new Promise(function (resolve, reject) {
+    const timer = setTimeout(function () {
+      reject(new Error('等了 ' + (ms / 1000) + ' 秒服务器还没回应（可能是网络被挡、或者地址不够新）'))
+    }, ms)
+    Promise.resolve(promiseLike).then(
+      function (v) { clearTimeout(timer); resolve(v) },
+      function (e) { clearTimeout(timer); reject(e) }
+    )
+  })
+}
+
 cpSubmit.addEventListener('click', async function () {
-  // ① 开门检查：这一步是"以你的身份"写数据，所以先确认登录。
-  //    注意这跟"按钮有没有藏起来"是两回事 —— 藏按钮只是好看，
-  //    真正拦人的是这一句 + 数据库那道 RLS 门。
-  const session = await requireLogin()
-  if (!session) return cpMsg('这一步需要先登录，上面已经帮你把登录框打开了。', 'err')
-
-  const content = cpText.value.trim()
-  if (!content) return cpMsg('先写点内容。', 'err')
-
-  const email = (session.user && session.user.email) || ''
-  const name = cpName.value.trim() || email.split('@')[0] || '匿名'
-
   cpSubmit.disabled = true
-  cpMsg('正在写入云端…', 'busy')
 
-  // ② 写。只带 content 和 owner_name 两个字段，owner_id 一个字都不传。
-  //    链的 .select() 是为了让云端"把刚写进去的那一行回传给我"，
-  //    这样我们就知道服务器给它分配了什么编号、什么时间。
-  const { data, error } = await cloud.database
-    .from('messages')
-    .insert({ content: content, owner_name: name })
-    .select()
+  // 整个流程套在 try/catch 里。
+  // 为什么？——因为"代码自己抛错"和"服务器返回错误"是两件完全不同的事，
+  // 前者如果没人接住，页面上会一点动静都没有（就是静默失败）。
+  // 有了 catch，无论哪种出错，你都至少能在页面上看到一句话。
+  try {
+    // ① 开门检查：这一步是"以你的身份"写数据，所以先确认登录。
+    //    注意这跟"按钮有没有藏起来"是两回事 —— 藏按钮只是好看，
+    //    真正拦人的是这一句 + 数据库那道 RLS 门。
+    cpMsg('① 正在确认登录状态…', 'busy')
+    const session = await withTimeout(requireLogin(), 15000)
+    if (!session) return cpMsg('这一步需要先登录，上面已经帮你把登录框打开了。', 'err')
+    console.log('[第3步-①] 已登录：', session.user && session.user.email)
 
-  cpSubmit.disabled = false
+    const content = cpText.value.trim()
+    if (!content) return cpMsg('先写点内容。', 'err')
 
-  if (error) {
-    // 42501 = 权限被拒（没登录，或者想以别人的身份写）
-    if (error.code === '42501') {
-      return cpMsg('云端拒绝了这次写入：未登录，或者这条数据不归你。', 'err')
+    const email = (session.user && session.user.email) || ''
+    const name = cpName.value.trim() || email.split('@')[0] || '匿名'
+
+    // ② 写。只带 content 和 owner_name 两个字段，owner_id 一个字都不传。
+    cpMsg('② 正在写入云端…（最多等 15 秒）', 'busy')
+    console.log('[第3步-②] 发出写入请求：', { content: content, owner_name: name, 带没带owner_id: false })
+
+    let query = cloud.database
+      .from('messages')
+      .insert({ content: content, owner_name: name })
+
+    // 先问一句"它有没有这个功能"再用。
+    // 链 .select() 是为了让云端把刚写进去的那一行回传给我 ——
+    // 但万一这个版本的接口不支持链它，直接链会让整个流程当场断掉（而且悄无声息）。
+    // 问一句再走，就不会因为这种版本差异把功能打死。
+    if (query && typeof query.select === 'function') {
+      query = query.select()
+    } else {
+      console.warn('[第3步-②] 这个版本的 insert 后面链不了 .select()，改成不取回写好的那一行')
     }
-    return cpMsg('写入失败：' + (error.message || error), 'err')
+
+    const res = await withTimeout(query, 15000)
+    const data = res && res.data
+    const error = res && res.error
+    console.log('[第3步-②] 云端回应：', res)
+
+    if (error) {
+      // 42501 = 权限被拒（没登录，或者想以别人的身份写）
+      if (error.code === '42501') {
+        return cpMsg('云端拒绝了这次写入：未登录，或者这条数据不归你。', 'err')
+      }
+      return cpMsg('写入失败：' + (error.message || error), 'err')
+    }
+
+    const created = Array.isArray(data) ? data[0] : (data && data.id ? data : null)
+    console.log('[写入成功]', created)
+
+    // ③ 清空输入框，然后重新去云端读一遍列表。
+    //    ⭐ 为什么不用"把这一行直接插到列表最前面"（那样看起来更流畅）？
+    //    因为"我们以为写成功了"和"云端真的有了"是两件事。
+    //    重新读一遍，等于让服务器自己回答"你刚才那条到底在不在"。
+    cpText.value = ''
+    updateCount()
+    cpMsg('③ 已写入' + (created ? '（编号 ' + created.id + '）' : '') + '，正在重新读一遍列表…', 'ok')
+    await loadMessages()
+    cpMsg(
+      '③ 已写入' + (created ? '（编号 ' + created.id + '）' : '') +
+      '，列表就是刚从云端读回来的结果 —— 写进去不算数，读回来才算数。',
+      'ok'
+    )
+  } catch (e) {
+    // 走到这里 = 代码自己出错了（不是服务器返回的错误）。一定要让它可见。
+    console.error('[第3步] 出错了：', e)
+    cpMsg('出错：' + ((e && (e.message || e)) || '未知错误') + '（细节已打到 Console）', 'err')
+  } finally {
+    // 无论成功、失败、还是抛错，按钮最后一定要恢复可点，
+    // 否则你会遇到"点了一次之后再点就没反应"—— 因为按钮一直是灰的。
+    cpSubmit.disabled = false
   }
+})
 
-  const created = Array.isArray(data) ? data[0] : null
-  console.log('[写入成功]', created)
+/* ── 兜底：任何"没被接住的错误"都要留痕 ──────────────────────
+   浏览器默认会把这类错误悄悄吃掉：页面看着没事，其实某一步已经断了 ——
+   这正是最难查的一类 bug。这两个监听器就是最后一道网：
+   只要出错，页面上一定看得见一句话，Console 里一定有原文。 */
+window.addEventListener('error', function (e) {
+  if (!e.message) return   // 资源加载失败（例如图标 404）没有 message，跳过
+  console.error('[页面出错]', e.message, e.filename + ':' + e.lineno)
+  setStatus('页面出错：' + e.message + '（位置 ' + e.filename + ':' + e.lineno + '）', 'err')
+})
 
-  // ③ 清空输入框，然后重新去云端读一遍列表。
-  //    ⭐ 为什么不用"把这一行直接插到列表最前面"（那样看起来更流畅）？
-  //    因为"我们以为写成功了"和"云端真的有了"是两件事。
-  //    重新读一遍，等于让服务器自己回答"你刚才那条到底在不在"。
-  cpText.value = ''
-  updateCount()
-  cpMsg(
-    '已写入' + (created ? '（编号 ' + created.id + '）' : '') +
-    '，下面是从云端重新读回来的结果 —— 写进去不算数，读回来才算数。',
-    'ok'
-  )
-  loadMessages()
+window.addEventListener('unhandledrejection', function (e) {
+  const reason = (e && e.reason) || {}
+  console.error('[有一步出错了，但没人接住]', reason)
+  setStatus('有一步出错了（没被接住）：' + (reason.message || reason) + ' —— 细节已打到 Console', 'err')
 })
 
 /* ── 启动 ────────────────────────────────────────────────────
