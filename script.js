@@ -1,7 +1,8 @@
-/* 留言板 · 第 2 步
+/* 留言板 · 第 3 步
  *
  * 第 1 步做的是"读"：去云端把留言取回来。
- * 这一版做的是"证明你是谁"：注册 / 登录 / 退出。
+ * 第 2 步做的是"证明你是谁"：注册 / 登录 / 退出。
+ * 这一版做的是"写"：把留言送进云端。
  *
  * 整个流程还是三句话，跟前四个项目同一个套路：
  *   ① 建客户端（告诉它"我是哪个应用"）
@@ -40,6 +41,17 @@ const authPanel = document.getElementById('authPanel')
 const tabsEl = document.getElementById('tabs')
 const authMsgEl = document.getElementById('authMsg')
 
+/* 第 3 步要用的元素，也在这里一次性取出来。
+   放在文件顶部是有意为之：renderAccount() 一被调用就要用它们，
+   而 renderAccount() 可能在任何时刻被云端通知触发 ——
+   先取好，就不用担心"用到的时候它还没准备好"。 */
+const cpHintEl = document.getElementById('cp-hint')
+const cpName = document.getElementById('cp-name')
+const cpText = document.getElementById('cp-text')
+const cpSubmit = document.getElementById('cp-submit')
+const cpCount = document.getElementById('cp-count')
+const cpMsgEl = document.getElementById('cp-msg')
+
 function authMsg(text, kind) {
   authMsgEl.textContent = text
   authMsgEl.className = 'auth-msg' + (kind ? ' ' + kind : '')
@@ -68,17 +80,20 @@ function showPane(name) {
 }
 
 /* ── 登录态怎么显示 ──────────────────────────────────────────
-   一个函数同时管三样：显示谁、两个按钮谁出现、面板收起。 */
+   一个函数同时管四样：显示谁、两个按钮谁出现、面板收起、发留言区的提示。 */
 function renderAccount(session) {
   if (session && session.user) {
-    whoEl.textContent = session.user.email || '已登录'
+    const email = session.user.email || ''
+    whoEl.textContent = email || '已登录'
     openAuthEl.hidden = true
     signOutEl.hidden = false
     authPanel.hidden = true
+    renderComposeHint(true, email)
   } else {
     whoEl.textContent = '未登录'
     openAuthEl.hidden = false
     signOutEl.hidden = true
+    renderComposeHint(false, '')
   }
 }
 
@@ -393,10 +408,102 @@ function setStatus(text, kind) {
   statusEl.className = 'status' + (kind ? ' ' + kind : '')
 }
 
+/* ══════════════════════════════════════════════════════════════
+   第 3 步：发留言（写）
+   ══════════════════════════════════════════════════════════════
+
+   写和读只差一个动作：
+     读 → .select()
+     写 → .insert({...})   后面再链一个 .select() 把新行要回来
+
+   ⚠️ 有一条规矩必须记住：**不许手动传 owner_id**。
+      它是服务器看"现在登录的是谁"自己填的（DEFAULT auth.uid()）。
+      前端硬传一个值，轻则白传（会被覆盖），重则被数据库直接拒掉 ——
+      因为 RLS 那道门写着"只能以自己的身份写"。
+
+   前端能传的只有"内容"和"昵称"。
+   昵称只是为了好看，它不参与任何权限判断 —— 真正管权限的是 owner_id。
+   ══════════════════════════════════════════════════════════════ */
+
+function cpMsg(text, kind) {
+  cpMsgEl.textContent = text
+  cpMsgEl.className = 'compose-msg' + (kind ? ' ' + kind : '')
+}
+
+/* 昵称框空着时，用邮箱 @ 前面那半截当默认值。
+   放 placeholder 而不是直接填进去 —— 默认值看得见，但你没点过它就不算你的输入。 */
+function renderComposeHint(loggedIn, email) {
+  if (loggedIn) {
+    cpHintEl.textContent = '当前身份：' + email + ' —— 发出去的留言会记在你名下。'
+    cpName.placeholder = (email.split('@')[0] || '匿名') + '（邮箱前缀，可改）'
+  } else {
+    cpHintEl.textContent = '还没登录。点「发表」会先让你登录 —— 因为云端不给没有身份的人写数据。'
+    cpName.placeholder = '不填就用邮箱前缀'
+  }
+}
+
+/* 字数计数：跟输入框的 input 事件绑在一起，你打一个字它就走一次 */
+function updateCount() {
+  cpCount.textContent = cpText.value.length + ' / 500'
+}
+cpText.addEventListener('input', updateCount)
+
+cpSubmit.addEventListener('click', async function () {
+  // ① 开门检查：这一步是"以你的身份"写数据，所以先确认登录。
+  //    注意这跟"按钮有没有藏起来"是两回事 —— 藏按钮只是好看，
+  //    真正拦人的是这一句 + 数据库那道 RLS 门。
+  const session = await requireLogin()
+  if (!session) return cpMsg('这一步需要先登录，上面已经帮你把登录框打开了。', 'err')
+
+  const content = cpText.value.trim()
+  if (!content) return cpMsg('先写点内容。', 'err')
+
+  const email = (session.user && session.user.email) || ''
+  const name = cpName.value.trim() || email.split('@')[0] || '匿名'
+
+  cpSubmit.disabled = true
+  cpMsg('正在写入云端…', 'busy')
+
+  // ② 写。只带 content 和 owner_name 两个字段，owner_id 一个字都不传。
+  //    链的 .select() 是为了让云端"把刚写进去的那一行回传给我"，
+  //    这样我们就知道服务器给它分配了什么编号、什么时间。
+  const { data, error } = await cloud.database
+    .from('messages')
+    .insert({ content: content, owner_name: name })
+    .select()
+
+  cpSubmit.disabled = false
+
+  if (error) {
+    // 42501 = 权限被拒（没登录，或者想以别人的身份写）
+    if (error.code === '42501') {
+      return cpMsg('云端拒绝了这次写入：未登录，或者这条数据不归你。', 'err')
+    }
+    return cpMsg('写入失败：' + (error.message || error), 'err')
+  }
+
+  const created = Array.isArray(data) ? data[0] : null
+  console.log('[写入成功]', created)
+
+  // ③ 清空输入框，然后重新去云端读一遍列表。
+  //    ⭐ 为什么不用"把这一行直接插到列表最前面"（那样看起来更流畅）？
+  //    因为"我们以为写成功了"和"云端真的有了"是两件事。
+  //    重新读一遍，等于让服务器自己回答"你刚才那条到底在不在"。
+  cpText.value = ''
+  updateCount()
+  cpMsg(
+    '已写入' + (created ? '（编号 ' + created.id + '）' : '') +
+    '，下面是从云端重新读回来的结果 —— 写进去不算数，读回来才算数。',
+    'ok'
+  )
+  loadMessages()
+})
+
 /* ── 启动 ────────────────────────────────────────────────────
    页面一打开先查登录状态，再读一次留言。
    点按钮可以再读一次 —— 用来验证"每次都是真的去云端"。 */
 reloadEl.addEventListener('click', loadMessages)
 showOrigin()
+updateCount()
 initAuth()
 loadMessages()

@@ -8,17 +8,18 @@
 </head>
 <body>
 <!--
-  留言板 —— 第 2 步：加上登录
+  留言板 —— 第 3 步：会发留言了
 
   第 1 步做的是"读"：网页去云端把留言取回来。
-  这一版做的是"证明你是谁"：注册 / 登录 / 退出。
+  第 2 步做的是"证明你是谁"：注册 / 登录 / 退出。
+  这一版做的是"写"：把留言送进云端。
 
   为什么登录必须排在发留言之前？
     云端的规矩是"每一行数据都必须有主人"（owner_id NOT NULL）。
     没有身份 → 服务器不知道这条留言该算谁的 → 写入直接被拒。
     所以「你是谁」在这个项目里是必需品，不是可选项。
 
-  这一版只做登录本身，还不发留言（那是第 3 步）。
+  这一版只做"发"，还不做"删"（那是第 4 步）。
 -->
 <main class="wrap">
 
@@ -31,7 +32,7 @@
         <button id="signOut" type="button" class="ghost" hidden>退出</button>
       </div>
     </div>
-    <p class="sub">第 2 步 · 加上登录（注册 / 登录 / 退出）</p>
+    <p class="sub">第 3 步 · 会发留言了（写完重新读一遍，读回来才算数）</p>
   </header>
 
   <p class="origin" id="origin"></p>
@@ -112,6 +113,31 @@
     <p class="auth-msg" id="authMsg"></p>
   </section>
 
+  <!-- ───────────── 发留言（第 3 步新增） ─────────────
+       这一块是"写"。
+       注意它和上面登录面板的区别：登录面板是"证明你是谁"，
+       这一块是"以你的身份办一件事"。
+
+       发出去之后会重新去云端读一遍列表 ——
+       因为"写进去"只是我们这边以为成功了，
+       "从云端读回来"才是真的成功。 -->
+  <section class="compose">
+    <p class="compose-hint" id="cp-hint"></p>
+
+    <label class="field"><span>昵称（只在留言上显示，不参与权限判断）</span>
+      <input id="cp-name" maxlength="20" placeholder="不填就用邮箱前缀" /></label>
+
+    <label class="field"><span>留言内容</span>
+      <textarea id="cp-text" rows="3" maxlength="500" placeholder="说点什么…"></textarea></label>
+
+    <div class="row">
+      <button id="cp-submit" type="button">发表</button>
+      <span class="counter" id="cp-count">0 / 500</span>
+    </div>
+
+    <p class="compose-msg" id="cp-msg"></p>
+  </section>
+
   <section class="panel">
     <div class="bar">
       <button id="reload" type="button">重新读一次</button>
@@ -122,7 +148,7 @@
   </section>
 
   <footer class="foot">
-    <p>这一版只加了登录，还不会发留言、不会删（那是第 3 步）。</p>
+    <p>这一版会发留言了，还不会删（那是第 4 步）。</p>
   </footer>
 
 </main>
