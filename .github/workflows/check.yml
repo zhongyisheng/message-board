@@ -22,13 +22,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ⚠️ 这两个 @v5 不能改回 @v4：
+      #    v4 内部声明自己跑在 Node 20 上，而 GitHub 已弃用 Node 20，
+      #    会强制用 Node 24 跑并给你一条黄字警告（不影响功能，但脏）。
+      #    v5 是这两个 action 为 Node 24 迁移发布的第一个版本。
+      #    ★ 注意区分两种"Node 版本"：
+      #       · 这里的 @v5        → 管"这个现成步骤自己用什么 Node 跑"（我们改不了，只能升版本）
+      #       · 下面的 node-version → 管"给我们的项目装哪个 Node"（我们自己说了算）
       - name: ① 把代码取下来
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: ② 装 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '22'      # 第 2 版从 20 升到 22（20 已被 GitHub 标记弃用）
+          node-version: '22'      # 给项目装的 Node（本地也是 22）
 
       - name: ③ 报一下家底（跑在哪、什么版本）
         run: |
