@@ -1,4 +1,4 @@
-# 自动检查 —— 项目 5 · 自动化（第 1 版：先跑通链路）
+# 自动检查 —— 项目 5 · 自动化
 #
 # 这个文件放在仓库里，GitHub 就会在"有人往 main 推代码"时，
 # 自己开一台机器、把代码取下来、按下面写的步骤跑一遍。
@@ -13,7 +13,7 @@ name: 自动检查
 on:
   push:
     branches: [main]      # 每次往 main 推代码就跑
-  workflow_dispatch:      # 也允许你手动点一下就跑（学习时很有用）
+  workflow_dispatch:      # 也允许你手动点一下就跑（Actions 页面右上角 Run workflow）
 
 # ── 跑什么 ────────────────────────────────────────────────
 jobs:
@@ -28,7 +28,7 @@ jobs:
       - name: ② 装 Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'      # 第 2 版从 20 升到 22（20 已被 GitHub 标记弃用）
 
       - name: ③ 报一下家底（跑在哪、什么版本）
         run: |
@@ -41,5 +41,11 @@ jobs:
       - name: ④ 语法检查（JS 写得对不对）
         run: node --check script.js
 
-      - name: ⑤ 收工
+      # ⭐ 第 2 版的核心：这才是"自动化"真正的价值
+      #    以前这些检查靠人记着做，现在机器每次自动做。
+      #    任何一项没过 → 这一步失败 → 整条流水线给红叉。
+      - name: ⑤ 自检（id 对账 / 契约 / 权限判据 / 密钥扫描）
+        run: node scripts/check.mjs
+
+      - name: ⑥ 收工
         run: echo "✅ 检查全部通过"
